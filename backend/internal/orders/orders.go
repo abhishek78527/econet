@@ -27,7 +27,8 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 	g.POST("/:id/reorder", Reorder)
 }
 
-type CheckoutAddress struct {
+// Accept address as either string or object
+type FlexAddress struct {
 	FullName string  `json:"full_name"`
 	Phone    string  `json:"phone"`
 	Email    string  `json:"email"`
@@ -40,18 +41,31 @@ type CheckoutAddress struct {
 	Landmark string  `json:"landmark"`
 	Lat      float64 `json:"lat"`
 	Lng      float64 `json:"lng"`
+	Label    string  `json:"label"`
+}
+
+func (a FlexAddress) ToString() string {
+	s := ""
+	if a.House != "" { s += a.House + ", " }
+	if a.Street != "" { s += a.Street + ", " }
+	if a.City != "" { s += a.City }
+	if a.State != "" { s += ", " + a.State }
+	if a.Pincode != "" { s += " " + a.Pincode }
+	if s == "" { s = "Address not provided" }
+	return s
 }
 
 func PlaceOrder(c *gin.Context) {
 	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+
 	var body struct {
 		Items []struct {
 			ProductID string `json:"product_id"`
 			Qty       int    `json:"qty"`
 		} `json:"items" binding:"required"`
-		Address     CheckoutAddress `json:"address"`
-		PaymentMode string          `json:"payment_mode"`
-		Coupon      string          `json:"coupon"`
+		Address     FlexAddress `json:"address"`
+		PaymentMode string      `json:"payment_mode"`
+		Coupon      string      `json:"coupon"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
@@ -67,11 +81,10 @@ func PlaceOrder(c *gin.Context) {
 		var p models.Product
 		if err := prodCol.FindOne(ctx, bson.M{"_id": oid}).Decode(&p); err != nil { continue }
 		if p.Stock < item.Qty {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Insufficient stock for %s", p.Name)}); return
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Only %d units of '%s' available", p.Stock, p.Name)}); return
 		}
 		price := p.DiscountedPrice()
-		img := ""
-		if len(p.Images) > 0 { img = p.Images[0] }
+		img := ""; if len(p.Images) > 0 { img = p.Images[0] }
 		orderItems = append(orderItems, models.OrderItem{
 			ProductID: oid, ProductName: p.Name, Image: img,
 			Qty: item.Qty, Price: price, SellerID: p.SellerID,
@@ -80,29 +93,22 @@ func PlaceOrder(c *gin.Context) {
 		prodCol.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$inc": bson.M{"stock": -item.Qty, "sold_count": item.Qty}})
 	}
 
-	// Calculate totals
-	shipping := 0.0
-	if subtotal < 499 { shipping = 49.0 }
-	tax := subtotal * 0.18 // 18% GST
+	// Totals
+	shipping := 0.0; if subtotal < 499 { shipping = 49.0 }
+	tax := subtotal * 0.18
 	discount := 0.0
 	if body.Coupon == "ECONET10" { discount = subtotal * 0.10 }
-	if body.Coupon == "FIRST50" { discount = 50.0 }
+	if body.Coupon == "FIRST50"  { discount = 50.0 }
+	if body.Coupon == "SAVE20"   { discount = subtotal * 0.20; if discount > 200 { discount = 200 } }
 	total := subtotal + shipping + tax - discount
 
-	// Build address
-	addr := models.OrderAddress{
-		FullName: body.Address.FullName, Phone: body.Address.Phone, Email: body.Address.Email,
-		House: body.Address.House, Street: body.Address.Street, City: body.Address.City,
-		State: body.Address.State, Country: body.Address.Country, Pincode: body.Address.Pincode,
-		Landmark: body.Address.Landmark, Lat: body.Address.Lat, Lng: body.Address.Lng,
-	}
-
 	invoiceNo := fmt.Sprintf("INV-%d", time.Now().UnixNano()/1e6)
+	addrString := body.Address.ToString()
 
 	order := models.Order{
 		ID: primitive.NewObjectID(), UserID: userID,
-		Items: orderItems, Total: total, Status: "pending",
-		Address: addr.House + ", " + addr.Street + ", " + addr.City + ", " + addr.State + " " + addr.Pincode,
+		Items: orderItems, Total: total,
+		Status: "pending", Address: addrString,
 		PaymentMode: body.PaymentMode,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
@@ -113,13 +119,21 @@ func PlaceOrder(c *gin.Context) {
 	// Save invoice
 	invoice := models.Invoice{
 		ID: primitive.NewObjectID(), OrderID: order.ID, UserID: userID,
-		InvoiceNo: invoiceNo, Items: orderItems, Address: addr,
-		Subtotal: subtotal, Tax: tax, Shipping: shipping, Discount: discount, Total: total,
+		InvoiceNo: invoiceNo, Items: orderItems,
+		Address: models.OrderAddress{
+			FullName: body.Address.FullName, Phone: body.Address.Phone,
+			House: body.Address.House, Street: body.Address.Street,
+			City: body.Address.City, State: body.Address.State,
+			Country: body.Address.Country, Pincode: body.Address.Pincode,
+			Landmark: body.Address.Landmark, Lat: body.Address.Lat, Lng: body.Address.Lng,
+		},
+		Subtotal: subtotal, Tax: tax, Shipping: shipping,
+		Discount: discount, Total: total,
 		PaymentMode: body.PaymentMode, CreatedAt: time.Now(),
 	}
 	db.GetCollection("invoices").InsertOne(ctx, invoice)
 
-	// Update seller stats
+	// Update seller revenue
 	sellerMap := map[primitive.ObjectID]float64{}
 	for _, item := range orderItems { sellerMap[item.SellerID] += item.Price * float64(item.Qty) }
 	storeCol := db.GetCollection("stores")
@@ -165,13 +179,10 @@ func GetStats(c *gin.Context) {
 	cursor.All(ctx, &orders)
 	totalSpent := 0.0
 	for _, o := range orders { if o.Status != "cancelled" { totalSpent += o.Total } }
-	avgVal := 0.0
-	if len(orders) > 0 { avgVal = totalSpent / float64(len(orders)) }
-	prodCol := db.GetCollection("products")
-	count, _ := prodCol.CountDocuments(ctx, bson.M{"seller_id": userID, "active": true})
+	avgVal := 0.0; if len(orders) > 0 { avgVal = totalSpent / float64(len(orders)) }
+	count, _ := db.GetCollection("products").CountDocuments(ctx, bson.M{"seller_id": userID, "active": true})
 	cursor2, _ := db.GetCollection("orders").Find(ctx, bson.M{})
-	var allOrders []models.Order
-	cursor2.All(ctx, &allOrders)
+	var allOrders []models.Order; cursor2.All(ctx, &allOrders)
 	earned := 0.0; sold := 0
 	for _, o := range allOrders {
 		for _, item := range o.Items {
@@ -189,8 +200,7 @@ func GetSellerOrders(c *gin.Context) {
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
 	cursor, _ := db.GetCollection("orders").Find(ctx, bson.M{"items.seller_id": sellerID}, opts)
-	var orders []models.Order
-	cursor.All(ctx, &orders)
+	var orders []models.Order; cursor.All(ctx, &orders)
 	if orders == nil { orders = []models.Order{} }
 	c.JSON(http.StatusOK, gin.H{"orders": orders})
 }
@@ -199,24 +209,17 @@ func GetSellerStats(c *gin.Context) {
 	sellerID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	cursor, _ := db.GetCollection("orders").Find(ctx, bson.M{"items.seller_id": sellerID})
-	var orders []models.Order
-	cursor.All(ctx, &orders)
-	revenue := 0.0; totalSold := 0
-	codOrders := 0; paidOrders := 0
+	var orders []models.Order; cursor.All(ctx, &orders)
+	revenue := 0.0; totalSold := 0; codOrders := 0; paidOrders := 0
 	for _, o := range orders {
 		for _, item := range o.Items {
-			if item.SellerID == sellerID {
-				revenue += item.Price * float64(item.Qty)
-				totalSold += item.Qty
-			}
+			if item.SellerID == sellerID { revenue += item.Price * float64(item.Qty); totalSold += item.Qty }
 		}
 		if o.PaymentMode == "cod" { codOrders++ } else { paidOrders++ }
 	}
 	prodCount, _ := db.GetCollection("products").CountDocuments(ctx, bson.M{"seller_id": sellerID, "active": true})
-	// Low stock alerts
 	lowCursor, _ := db.GetCollection("products").Find(ctx, bson.M{"seller_id": sellerID, "active": true, "stock": bson.M{"$lte": 5}})
-	var lowStock []models.Product
-	lowCursor.All(ctx, &lowStock)
+	var lowStock []models.Product; lowCursor.All(ctx, &lowStock)
 	c.JSON(http.StatusOK, gin.H{
 		"revenue": revenue, "total_sold": totalSold, "total_orders": len(orders),
 		"cod_orders": codOrders, "paid_orders": paidOrders,
@@ -241,7 +244,6 @@ func Reorder(c *gin.Context) {
 	if err := db.GetCollection("orders").FindOne(ctx, bson.M{"_id": oid, "user_id": userID}).Decode(&order); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"}); return
 	}
-	// Add all items back to cart
 	for _, item := range order.Items {
 		db.GetCollection("carts").UpdateOne(ctx, bson.M{"user_id": userID},
 			bson.M{"$push": bson.M{"items": models.CartItem{ProductID: item.ProductID, Qty: item.Qty, Price: item.Price}},
