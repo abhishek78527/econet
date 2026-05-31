@@ -263,3 +263,71 @@ type UserStats struct {
 	TotalSold     int     `json:"total_sold"`
 	ProductsListed int    `json:"products_listed"`
 }
+
+// ── Address ────────────────────────────────────────────────────────────────────
+type Address struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID    primitive.ObjectID `bson:"user_id" json:"user_id"`
+	Label     string             `bson:"label" json:"label"` // Home, Work, Other
+	FullName  string             `bson:"full_name" json:"full_name"`
+	Phone     string             `bson:"phone" json:"phone"`
+	Email     string             `bson:"email" json:"email"`
+	House     string             `bson:"house" json:"house"`
+	Street    string             `bson:"street" json:"street"`
+	City      string             `bson:"city" json:"city"`
+	State     string             `bson:"state" json:"state"`
+	Country   string             `bson:"country" json:"country"`
+	Pincode   string             `bson:"pincode" json:"pincode"`
+	Landmark  string             `bson:"landmark" json:"landmark"`
+	Lat       float64            `bson:"lat" json:"lat"`
+	Lng       float64            `bson:"lng" json:"lng"`
+	IsDefault bool               `bson:"is_default" json:"is_default"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+}
+
+// ── Payment ────────────────────────────────────────────────────────────────────
+type Payment struct {
+	ID                primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	OrderID           primitive.ObjectID `bson:"order_id" json:"order_id"`
+	UserID            primitive.ObjectID `bson:"user_id" json:"user_id"`
+	RazorpayOrderID   string             `bson:"razorpay_order_id" json:"razorpay_order_id"`
+	RazorpayPaymentID string             `bson:"razorpay_payment_id" json:"razorpay_payment_id"`
+	RazorpaySignature string             `bson:"razorpay_signature" json:"razorpay_signature"`
+	Amount            float64            `bson:"amount" json:"amount"`
+	Currency          string             `bson:"currency" json:"currency"`
+	Method            string             `bson:"method" json:"method"` // upi/card/netbanking/cod/wallet
+	Status            string             `bson:"status" json:"status"` // pending/paid/failed/refunded
+	CreatedAt         time.Time          `bson:"created_at" json:"created_at"`
+}
+
+// ── Enhanced Order ─────────────────────────────────────────────────────────────
+type OrderAddress struct {
+	FullName string  `bson:"full_name" json:"full_name"`
+	Phone    string  `bson:"phone" json:"phone"`
+	Email    string  `bson:"email" json:"email"`
+	House    string  `bson:"house" json:"house"`
+	Street   string  `bson:"street" json:"street"`
+	City     string  `bson:"city" json:"city"`
+	State    string  `bson:"state" json:"state"`
+	Country  string  `bson:"country" json:"country"`
+	Pincode  string  `bson:"pincode" json:"pincode"`
+	Landmark string  `bson:"landmark" json:"landmark"`
+	Lat      float64 `bson:"lat" json:"lat"`
+	Lng      float64 `bson:"lng" json:"lng"`
+}
+
+type Invoice struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	OrderID     primitive.ObjectID `bson:"order_id" json:"order_id"`
+	UserID      primitive.ObjectID `bson:"user_id" json:"user_id"`
+	InvoiceNo   string             `bson:"invoice_no" json:"invoice_no"`
+	Items       []OrderItem        `bson:"items" json:"items"`
+	Address     OrderAddress       `bson:"address" json:"address"`
+	Subtotal    float64            `bson:"subtotal" json:"subtotal"`
+	Tax         float64            `bson:"tax" json:"tax"`
+	Shipping    float64            `bson:"shipping" json:"shipping"`
+	Discount    float64            `bson:"discount" json:"discount"`
+	Total       float64            `bson:"total" json:"total"`
+	PaymentMode string             `bson:"payment_mode" json:"payment_mode"`
+	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"linkup-backend/internal/address"
 	"linkup-backend/internal/auth"
 	"linkup-backend/internal/blogs"
 	"linkup-backend/internal/cart"
@@ -18,6 +19,7 @@ import (
 	"linkup-backend/internal/dm"
 	"linkup-backend/internal/middleware"
 	"linkup-backend/internal/orders"
+	"linkup-backend/internal/payment"
 	"linkup-backend/internal/posts"
 	"linkup-backend/internal/products"
 	"linkup-backend/internal/store"
@@ -45,7 +47,7 @@ func main() {
 
 	r.Static("/uploads", "./uploads")
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "service": "EcoNet API v3"})
+		c.JSON(200, gin.H{"status": "ok", "service": "EcoNet API v4"})
 	})
 
 	api := r.Group("/api/v1")
@@ -62,11 +64,13 @@ func main() {
 	products.RegisterRoutes(p)
 	orders.RegisterRoutes(p)
 	cart.RegisterRoutes(p)
+	payment.RegisterRoutes(p)
+	address.RegisterRoutes(p)
 
 	r.GET("/ws/chat", middleware.WSAuth(), chat.HandleWebSocket)
 
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
-	log.Printf("EcoNet API v3 on :%s", port)
+	log.Printf("EcoNet API v4 on :%s", port)
 	if err := r.Run(":" + port); err != nil { log.Fatal(err) }
 }
