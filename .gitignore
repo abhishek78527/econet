@@ -1,0 +1,14 @@
+# Go
+backend/.env
+backend/server
+backend/tmp/
+*.exe
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# General
+.DS_Store
+*.log
